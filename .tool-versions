@@ -1,0 +1,5 @@
+elixir 1.19.4-otp-28
+erlang 28.2
+nodejs 23.11.0
+rust 1.88.0
+pandoc 3.8.3
