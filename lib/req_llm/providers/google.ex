@@ -1938,6 +1938,17 @@ defmodule ReqLLM.Providers.Google do
   defp normalize_google_finish_reason("MAX_TOKENS"), do: "length"
   defp normalize_google_finish_reason("SAFETY"), do: "content_filter"
   defp normalize_google_finish_reason("RECITATION"), do: "content_filter"
+
+  # Gemini reports content-policy refusals under several names beyond SAFETY.
+  # They describe the same outcome — the model declined to produce output — so
+  # they normalize the same way. Collapsing them into "error" instead makes a
+  # deterministic refusal look like a transient provider fault, which callers
+  # then retry pointlessly. finish_reason_raw still carries the exact name.
+  defp normalize_google_finish_reason("BLOCKLIST"), do: "content_filter"
+  defp normalize_google_finish_reason("PROHIBITED_CONTENT"), do: "content_filter"
+  defp normalize_google_finish_reason("SPII"), do: "content_filter"
+  defp normalize_google_finish_reason("IMAGE_SAFETY"), do: "content_filter"
+
   defp normalize_google_finish_reason("OTHER"), do: "error"
   defp normalize_google_finish_reason(_), do: "error"
 

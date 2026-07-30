@@ -1531,6 +1531,19 @@ defmodule ReqLLM.Providers.GoogleTest do
       assert meta_chunk.metadata[:finish_reason_raw] == "STOP"
     end
 
+    test "policy stops normalize to content_filter like SAFETY", %{model: model} do
+      for reason <- ["BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY"] do
+        event = %{data: %{"candidates" => [%{"finishReason" => reason, "index" => 0}]}}
+
+        [meta_chunk] = Google.decode_stream_event(event, model)
+
+        assert meta_chunk.metadata[:finish_reason] == "content_filter",
+               "#{reason} should be a content filter stop, got #{inspect(meta_chunk.metadata[:finish_reason])}"
+
+        assert meta_chunk.metadata[:finish_reason_raw] == reason
+      end
+    end
+
     test "usageMetadata alone still has no finish_reason (unchanged)", %{model: model} do
       event = %{
         data: %{
