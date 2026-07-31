@@ -1939,18 +1939,32 @@ defmodule ReqLLM.Providers.Google do
   defp normalize_google_finish_reason("SAFETY"), do: "content_filter"
   defp normalize_google_finish_reason("RECITATION"), do: "content_filter"
 
-  # Gemini reports content-policy refusals under several names beyond SAFETY.
-  # They describe the same outcome — the model declined to produce output — so
-  # they normalize the same way. Collapsing them into "error" instead makes a
-  # deterministic refusal look like a transient provider fault, which callers
-  # then retry pointlessly. finish_reason_raw still carries the exact name.
+  # Gemini flags generated content under several names beyond SAFETY. The proto
+  # describes this whole group in the same words — "the response candidate
+  # content was flagged for ..." — so they are one outcome wearing different
+  # labels and normalize the same way. Collapsing them into "error" instead
+  # makes a deterministic stop look like a transient provider fault, which
+  # callers then retry pointlessly. finish_reason_raw still carries the exact
+  # name, so nothing is lost for diagnosis.
   #
-  # Taken from the FinishReason enum in googleapis/python-genai
-  # (google/genai/types.py), which is a superset of the values listed in the
-  # public REST docs — the IMAGE_* refusals appear only in the generated types.
+  # Source of truth is the FinishReason enum in googleapis/googleapis
+  # (google/ai/generativelanguage/v1beta/generative_service.proto). Cross-check
+  # both generated clients before adding names: the public REST reference omits
+  # the IMAGE_* values, and google-genai's Python types omit
+  # TOO_MANY_TOOL_CALLS, so neither is complete on its own.
+  #
+  # Deliberately NOT mapped here, because they are not content flags and want
+  # different handling than "the model refused": UNEXPECTED_TOOL_CALL (a tool
+  # call with no tools enabled in the request — a request-construction fault),
+  # TOO_MANY_TOOL_CALLS (the system aborted a tool-call runaway), NO_IMAGE /
+  # IMAGE_OTHER, and OTHER. Retrying most of these is equally futile, but they
+  # need a non-retryable non-refusal classification the caller does not have
+  # yet, so they keep the existing "error" behaviour rather than borrow the
+  # wrong message.
   defp normalize_google_finish_reason("BLOCKLIST"), do: "content_filter"
   defp normalize_google_finish_reason("PROHIBITED_CONTENT"), do: "content_filter"
   defp normalize_google_finish_reason("SPII"), do: "content_filter"
+  defp normalize_google_finish_reason("LANGUAGE"), do: "content_filter"
   defp normalize_google_finish_reason("IMAGE_SAFETY"), do: "content_filter"
   defp normalize_google_finish_reason("IMAGE_PROHIBITED_CONTENT"), do: "content_filter"
   defp normalize_google_finish_reason("IMAGE_RECITATION"), do: "content_filter"

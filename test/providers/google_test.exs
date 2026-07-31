@@ -1536,6 +1536,7 @@ defmodule ReqLLM.Providers.GoogleTest do
             "BLOCKLIST",
             "PROHIBITED_CONTENT",
             "SPII",
+            "LANGUAGE",
             "IMAGE_SAFETY",
             "IMAGE_PROHIBITED_CONTENT",
             "IMAGE_RECITATION"
@@ -1546,6 +1547,29 @@ defmodule ReqLLM.Providers.GoogleTest do
 
         assert meta_chunk.metadata[:finish_reason] == "content_filter",
                "#{reason} should be a content filter stop, got #{inspect(meta_chunk.metadata[:finish_reason])}"
+
+        assert meta_chunk.metadata[:finish_reason_raw] == reason
+      end
+    end
+
+    # These are stops, but not content flags, and they want handling the
+    # content_filter path cannot give them ("the model refused" would be wrong).
+    # Pinning them keeps a later pass from sweeping the whole enum into
+    # content_filter for tidiness.
+    test "non-content-flag stops stay error and keep their raw name", %{model: model} do
+      for reason <- [
+            "UNEXPECTED_TOOL_CALL",
+            "TOO_MANY_TOOL_CALLS",
+            "NO_IMAGE",
+            "IMAGE_OTHER",
+            "OTHER"
+          ] do
+        event = %{data: %{"candidates" => [%{"finishReason" => reason, "index" => 0}]}}
+
+        [meta_chunk] = Google.decode_stream_event(event, model)
+
+        assert meta_chunk.metadata[:finish_reason] == "error",
+               "#{reason} is not a content flag and should stay error, got #{inspect(meta_chunk.metadata[:finish_reason])}"
 
         assert meta_chunk.metadata[:finish_reason_raw] == reason
       end
