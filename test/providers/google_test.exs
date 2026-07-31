@@ -1532,7 +1532,14 @@ defmodule ReqLLM.Providers.GoogleTest do
     end
 
     test "policy stops normalize to content_filter like SAFETY", %{model: model} do
-      for reason <- ["BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY"] do
+      for reason <- [
+            "BLOCKLIST",
+            "PROHIBITED_CONTENT",
+            "SPII",
+            "IMAGE_SAFETY",
+            "IMAGE_PROHIBITED_CONTENT",
+            "IMAGE_RECITATION"
+          ] do
         event = %{data: %{"candidates" => [%{"finishReason" => reason, "index" => 0}]}}
 
         [meta_chunk] = Google.decode_stream_event(event, model)

@@ -1944,10 +1944,16 @@ defmodule ReqLLM.Providers.Google do
   # they normalize the same way. Collapsing them into "error" instead makes a
   # deterministic refusal look like a transient provider fault, which callers
   # then retry pointlessly. finish_reason_raw still carries the exact name.
+  #
+  # Taken from the FinishReason enum in googleapis/python-genai
+  # (google/genai/types.py), which is a superset of the values listed in the
+  # public REST docs — the IMAGE_* refusals appear only in the generated types.
   defp normalize_google_finish_reason("BLOCKLIST"), do: "content_filter"
   defp normalize_google_finish_reason("PROHIBITED_CONTENT"), do: "content_filter"
   defp normalize_google_finish_reason("SPII"), do: "content_filter"
   defp normalize_google_finish_reason("IMAGE_SAFETY"), do: "content_filter"
+  defp normalize_google_finish_reason("IMAGE_PROHIBITED_CONTENT"), do: "content_filter"
+  defp normalize_google_finish_reason("IMAGE_RECITATION"), do: "content_filter"
 
   defp normalize_google_finish_reason("OTHER"), do: "error"
   defp normalize_google_finish_reason(_), do: "error"
