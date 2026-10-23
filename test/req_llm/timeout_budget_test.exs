@@ -1,3 +1,12 @@
+unless Code.ensure_loaded?(:otel_ctx) do
+  defmodule :otel_ctx do
+    @moduledoc false
+
+    def get_current, do: Process.get(:fake_otel_ctx, :undefined)
+    def attach(ctx), do: Process.put(:fake_otel_ctx, ctx)
+  end
+end
+
 defmodule ReqLLM.TimeoutBudgetTest do
   use ExUnit.Case, async: false
 
@@ -80,6 +89,26 @@ defmodule ReqLLM.TimeoutBudgetTest do
     assert_raise RuntimeError, "adapter failed", fn ->
       TimeoutBudget.request(request, TimeoutBudget.deadline(total_timeout: 1_000))
     end
+  end
+
+  test "runs a request under a finite budget with the caller's OpenTelemetry context" do
+    caller_ctx = %{caller: make_ref()}
+    :otel_ctx.attach(caller_ctx)
+    test_pid = self()
+
+    request =
+      Req.new(
+        url: "https://example.invalid",
+        adapter: fn request ->
+          send(test_pid, {:request_ctx, :otel_ctx.get_current()})
+          {request, Req.Response.new(status: 200)}
+        end
+      )
+
+    assert {:ok, %Req.Response{status: 200}} =
+             TimeoutBudget.request(request, TimeoutBudget.deadline(total_timeout: 1_000))
+
+    assert_received {:request_ctx, ^caller_ctx}
   end
 
   defp restore_env(key, nil), do: Application.delete_env(:req_llm, key)
