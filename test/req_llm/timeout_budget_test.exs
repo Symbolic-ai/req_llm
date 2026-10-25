@@ -79,6 +79,39 @@ defmodule ReqLLM.TimeoutBudgetTest do
     refute_received {ReqLLM.TimeoutBudget, _capture_ref, _context}
   end
 
+  test "stops retrying once the deadline passes, even when the caller wakes late" do
+    attempts = :atomics.new(1, [])
+    caller = self()
+
+    # Starve the caller from the first attempt until well after the deadline, as
+    # a busy scheduler would, while the request task keeps running.
+    starver =
+      spawn(fn ->
+        receive do
+          :attempt_started ->
+            :erlang.suspend_process(caller)
+            Process.sleep(500)
+            :erlang.resume_process(caller)
+        end
+      end)
+
+    request =
+      Req.new(
+        url: "https://example.invalid",
+        adapter: fn request ->
+          if :atomics.add_get(attempts, 1, 1) == 1, do: send(starver, :attempt_started)
+          Process.sleep(150)
+          {request, %Req.TransportError{reason: :timeout}}
+        end
+      )
+      |> ReqLLM.Step.Retry.attach(max_retries: 3)
+
+    assert {:error, _timeout} =
+             TimeoutBudget.request(request, TimeoutBudget.deadline(total_timeout: 100))
+
+    assert :atomics.get(attempts, 1) == 1
+  end
+
   test "preserves request exceptions under a finite budget" do
     request =
       Req.new(
