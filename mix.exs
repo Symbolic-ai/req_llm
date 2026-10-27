@@ -245,7 +245,7 @@ defmodule ReqLLM.MixProject do
       {:llm_db, "~> 2026.10.4"},
 
       # Dev/test dependencies
-      {:bandit, "~> 1.13.1", only: [:dev, :test], runtime: false},
+      {:bandit, "~> 1.14.0", only: [:dev, :test], runtime: false},
       {:tidewave, "~> 0.5", only: :dev, runtime: false},
       {:ex_doc, "~> 0.40.4", only: :dev, runtime: false},
       {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
