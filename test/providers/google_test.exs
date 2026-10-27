@@ -1002,6 +1002,41 @@ defmodule ReqLLM.Providers.GoogleTest do
       refute Map.has_key?(thinking_config, "thinkingLevel")
     end
 
+    for {model_id, thinking_opts, expected} <- [
+          {"gemini-2.5-flash", [google_thinking_budget: 2048], %{"thinkingBudget" => 2048}},
+          {"gemini-3.1-pro-preview", [google_thinking_level: :low], %{"thinkingLevel" => "low"}}
+        ],
+        stream <- [false, true],
+        include_thoughts <- [false, true] do
+      test "honors include thoughts #{include_thoughts} for #{model_id} (stream=#{stream})" do
+        model = ReqLLM.model!("google:" <> unquote(model_id))
+        context = context_fixture()
+
+        opts = [
+          api_key: "test",
+          provider_options: [
+            {:google_include_thoughts, unquote(include_thoughts)} | unquote(thinking_opts)
+          ]
+        ]
+
+        body =
+          if unquote(stream) do
+            {:ok, request} = Google.attach_stream(model, context, opts, nil)
+            Jason.decode!(request.body)
+          else
+            {:ok, request} = Google.prepare_request(:chat, model, context, opts)
+            request |> Google.encode_body() |> ReqLLM.Test.Helpers.json_body()
+          end
+
+        assert body["generationConfig"]["thinkingConfig"] ==
+                 Map.put(
+                   unquote(Macro.escape(expected)),
+                   "includeThoughts",
+                   unquote(include_thoughts)
+                 )
+      end
+    end
+
     test "encode_body raises when both google_thinking_level and google_thinking_budget are set" do
       context = context_fixture()
 
