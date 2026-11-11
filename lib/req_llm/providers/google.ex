@@ -1672,7 +1672,7 @@ defmodule ReqLLM.Providers.Google do
             merged_response =
               ReqLLM.Context.merge_response(
                 req.options[:context] || %ReqLLM.Context{messages: []},
-                response
+                put_raw_finish_provider_meta(response, body)
               )
 
             {req, %{resp | body: merged_response}}
@@ -2106,10 +2106,11 @@ defmodule ReqLLM.Providers.Google do
             "finish_reason" => normalize_google_finish_reason(candidate["finishReason"])
           }
 
-        _ ->
+        candidate ->
           %{
             "message" => %{"role" => "assistant", "content" => ""},
-            "finish_reason" => "stop"
+            "finish_reason" =>
+              normalize_google_finish_reason(if is_map(candidate), do: candidate["finishReason"])
           }
       end
 

@@ -2641,6 +2641,55 @@ defmodule ReqLLM.Providers.GoogleTest do
              end)
     end
 
+    test "object responses preserve raw finish metadata with and without decodable JSON" do
+      for {reason, normalized} <- [
+            {"STOP", :stop},
+            {"MAX_TOKENS", :length},
+            {"SAFETY", :content_filter},
+            {"UNEXPECTED_TOOL_CALL", :error},
+            {"TOO_MANY_TOOL_CALLS", :error}
+          ],
+          text <- [~s({"name":"Ada"}), "{", nil] do
+        candidate = %{"finishReason" => reason, "finishMessage" => "Synthetic finish detail"}
+
+        candidate =
+          if text do
+            Map.put(candidate, "content", %{"parts" => [%{"text" => text}]})
+          else
+            candidate
+          end
+
+        body = %{
+          "candidates" => [candidate],
+          "usageMetadata" => %{
+            "promptTokenCount" => 10,
+            "candidatesTokenCount" => 5,
+            "totalTokenCount" => 15
+          }
+        }
+
+        req = %Req.Request{
+          options: [
+            context: context_fixture(),
+            stream: false,
+            operation: :object,
+            model: "gemini-2.5-flash"
+          ]
+        }
+
+        {_req, resp} = Google.decode_response({req, %Req.Response{status: 200, body: body}})
+
+        assert ReqLLM.Response.finish_reason(resp.body) == normalized
+        assert resp.body.provider_meta["finish_reason_raw"] == reason
+        assert resp.body.provider_meta["finish_message"] == "Synthetic finish detail"
+        assert ReqLLM.Response.usage(resp.body).total_tokens == 15
+
+        if text == ~s({"name":"Ada"}) do
+          assert {:ok, %{"name" => "Ada"}} = ReqLLM.Response.unwrap_object(resp.body)
+        end
+      end
+    end
+
     test "decode_response for :object preserves function calls and thought signatures" do
       google_response = %{
         "candidates" => [
