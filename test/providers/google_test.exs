@@ -2649,7 +2649,7 @@ defmodule ReqLLM.Providers.GoogleTest do
             {"UNEXPECTED_TOOL_CALL", :error},
             {"TOO_MANY_TOOL_CALLS", :error}
           ],
-          text <- [~s({"name":"Ada"}), "{", nil] do
+          text <- [~s({"name":"Ada"}), "not JSON", nil] do
         candidate = %{"finishReason" => reason, "finishMessage" => "Synthetic finish detail"}
 
         candidate =
@@ -2686,7 +2686,27 @@ defmodule ReqLLM.Providers.GoogleTest do
 
         if text == ~s({"name":"Ada"}) do
           assert {:ok, %{"name" => "Ada"}} = ReqLLM.Response.unwrap_object(resp.body)
+        else
+          assert {:error, _} = ReqLLM.Response.unwrap_object(resp.body)
         end
+      end
+    end
+
+    test "content-free object responses without a usable reason retain the default stop" do
+      for body <- [
+            %{"candidates" => []},
+            %{"candidates" => [%{}]},
+            %{"candidates" => [%{"finishReason" => nil}]}
+          ] do
+        req = %Req.Request{
+          options: [operation: :object, stream: false, model: "gemini-2.5-flash"]
+        }
+
+        {_req, resp} = Google.decode_response({req, %Req.Response{status: 200, body: body}})
+
+        assert ReqLLM.Response.finish_reason(resp.body) == :stop
+        refute Map.has_key?(resp.body.provider_meta, "finish_reason_raw")
+        assert {:error, _} = ReqLLM.Response.unwrap_object(resp.body)
       end
     end
 

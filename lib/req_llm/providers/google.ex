@@ -2106,11 +2106,16 @@ defmodule ReqLLM.Providers.Google do
             "finish_reason" => normalize_google_finish_reason(candidate["finishReason"])
           }
 
-        candidate ->
+        %{"finishReason" => reason} when is_binary(reason) ->
           %{
             "message" => %{"role" => "assistant", "content" => ""},
-            "finish_reason" =>
-              normalize_google_finish_reason(if is_map(candidate), do: candidate["finishReason"])
+            "finish_reason" => normalize_google_finish_reason(reason)
+          }
+
+        _ ->
+          %{
+            "message" => %{"role" => "assistant", "content" => ""},
+            "finish_reason" => "stop"
           }
       end
 
