@@ -43,9 +43,7 @@ ReqLLM tests and fixtures verify that:
 
 Those tests are important, but they are not a guarantee of invoice-exact billing across every provider plan or deployment.
 
-## Known Gaps
-
-### Retained pricing inputs
+## Retained pricing inputs
 
 Successful local pricing also exposes `usage.pricing_evidence`, independently of
 the legacy rounded totals. Raw-response consumers can read the same evidence at
@@ -78,6 +76,8 @@ usage and its inclusion flags. Host applications still own durable observation
 identity, original attribution, rate-authority conflicts, native measurements,
 coverage gaps and storage/recovery. This snapshot is an estimate input, not an
 invoice or customer-billing authority.
+
+## Known Gaps
 
 ### Unsupported billing surfaces
 
