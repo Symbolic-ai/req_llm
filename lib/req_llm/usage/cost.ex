@@ -71,7 +71,8 @@ defmodule ReqLLM.Usage.Cost do
       :output_cost,
       :reasoning_cost,
       :total_cost,
-      :pricing_evidence
+      :pricing_evidence,
+      "pricing_evidence"
     ])
     |> Map.put(:pricing, %{status: :unknown})
   end
@@ -84,12 +85,15 @@ defmodule ReqLLM.Usage.Cost do
       :output_cost,
       :reasoning_cost,
       :total_cost,
-      :pricing_evidence
+      :pricing_evidence,
+      "pricing_evidence"
     ])
     |> Map.put(:pricing, pricing)
   end
 
   def merge(usage, cost_breakdown, _opts) do
+    usage = Map.delete(usage, "pricing_evidence")
+
     usage =
       case Map.get(cost_breakdown, :pricing_evidence) do
         evidence when is_map(evidence) -> Map.put(usage, :pricing_evidence, evidence)

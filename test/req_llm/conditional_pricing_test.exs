@@ -524,6 +524,15 @@ defmodule ReqLLM.ConditionalPricingTest do
     unpriced = Cost.apply(priced, %{model | pricing: nil})
     assert unpriced.pricing.status == :unknown
     refute Map.has_key?(unpriced, :pricing_evidence)
+
+    restored = priced |> Jason.encode!() |> Jason.decode!()
+    unpriced = Cost.apply(restored, %{model | pricing: nil})
+    refute Map.has_key?(unpriced, "pricing_evidence")
+    refute Map.has_key?(unpriced, :pricing_evidence)
+
+    repriced = Cost.apply(restored, model)
+    assert repriced.pricing_evidence == priced.pricing_evidence
+    refute Map.has_key?(repriced, "pricing_evidence")
   end
 
   test "pricing evidence omits arbitrary context and request content and marks the omission" do
