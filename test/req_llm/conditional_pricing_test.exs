@@ -125,6 +125,11 @@ defmodule ReqLLM.ConditionalPricingTest do
     assert %{complete: false} =
              ReqLLM.PricingContext.snapshot(%{:input_tokens => nil, "input_tokens" => 1})
 
+    fallback = %{model | pricing: %{currency: "USD", components: [Map.delete(component, :meter)]}}
+    assert {:ok, fallback_charge} = Billing.calculate(%{storage: 1_000_000}, fallback)
+    assert fallback_charge.total == 2.0
+    assert [%{meter: "storage", count: 1_000_000}] = fallback_charge.line_items
+
     conditional = Map.put(component, :applies_when, %{input_tokens: %{lte: 100}})
     model = %{model | pricing: %{currency: "USD", components: [conditional]}}
     assert {:ok, nil} = Billing.calculate(usage, model)

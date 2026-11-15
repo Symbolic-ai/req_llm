@@ -559,7 +559,7 @@ defmodule ReqLLM.Billing do
       value when is_binary(value) -> value
       {:tool, tool, _unit} -> Tool.normalize_unit(tool)
       {:image, _size} -> "generated"
-      {:storage, meter} -> Tool.normalize_unit(meter)
+      {:storage, meter} -> Tool.normalize_unit(meter) || "storage"
       _ -> nil
     end
   end
