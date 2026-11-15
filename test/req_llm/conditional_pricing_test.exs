@@ -480,7 +480,9 @@ defmodule ReqLLM.ConditionalPricingTest do
     assert %{version: "req_llm_pricing_inputs_v1", components: components} =
              priced.private.req_llm.pricing_evidence
 
-    assert length(components) == 3
+    assert Enum.sort(Enum.map(components, & &1.component)) ==
+             ["token.cache_read.peak", "token.input.peak", "token.output.peak"]
+
     assert Enum.all?(components, &(&1.pricing_context.facts["pricing_period"] == "peak"))
 
     {_request, unknown} = Usage.handle({%{request | private: %{req_llm_model: model}}, response})
@@ -506,7 +508,9 @@ defmodule ReqLLM.ConditionalPricingTest do
     assert %{version: "req_llm_pricing_inputs_v1", components: components} =
              metadata.usage.pricing_evidence
 
-    assert length(components) == 3
+    assert Enum.sort(Enum.map(components, & &1.component)) ==
+             ["token.cache_read.peak", "token.input.peak", "token.output.peak"]
+
     assert Enum.all?(components, &(&1.pricing_context.facts["pricing_period"] == "peak"))
     StreamServer.cancel(server)
   end

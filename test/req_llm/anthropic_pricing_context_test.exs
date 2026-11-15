@@ -174,6 +174,9 @@ defmodule ReqLLM.AnthropicPricingContextTest do
       assert_in_delta usage.total_cost, 0.0006, 1.0e-12
       assert [_ | _] = components = usage.pricing_evidence.components
 
+      assert Enum.sort(Enum.map(components, & &1.component)) ==
+               ["token.cache_read", "token.input", "token.output", "tool.web_search"]
+
       assert Enum.all?(components, fn component ->
                component.pricing_context.complete and
                  component.pricing_context.facts["api"] == "messages" and
