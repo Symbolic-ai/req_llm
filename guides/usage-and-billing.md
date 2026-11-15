@@ -317,6 +317,25 @@ response.usage.cost
 #   }
 ```
 
+### Retained Pricing Inputs
+
+When local pricing succeeds, `response.usage.pricing_evidence` retains the
+versioned `req_llm_pricing_inputs_v1` inputs separately from rounded costs.
+Raw-response consumers can read the same value at
+`response.private[:req_llm][:pricing_evidence]` after the usage step. Streaming
+usage metadata also carries the snapshot.
+
+The evidence contains currency, the resolved pricing model and selected
+components with counts, meters, units, original base rate/denominator, ordered
+multipliers and bounded selector context. Cost and line-item maps also expose
+these additional fields. Consumers can calculate with their own decimal policy;
+the snapshot does not contain the rounded component or total amounts.
+
+Missing evidence does not mean free usage. Context `complete` describes retained
+supplied facts, not complete metering or invoice accuracy. See
+[Retained pricing inputs](pricing-policy.md#retained-pricing-inputs) for the
+field contract, context/privacy bounds, TTL grouping and host responsibilities.
+
 ### Line Items
 
 For detailed billing analysis, `line_items` provides per-component costs:

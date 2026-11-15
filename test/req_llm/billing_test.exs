@@ -86,6 +86,10 @@ defmodule ReqLLM.BillingTest do
     assert {:ok, cost} = Billing.calculate(usage, model)
     assert cost.tools == 1.0
     assert cost.total == 1.0
+    assert [item] = cost.line_items
+    assert item.meter == "web_search"
+    assert item.unit == "query"
+    assert item.rate_inputs == %{rate: 0.5, per: 1, multipliers: []}
   end
 
   test "reports unknown when tool unit mismatches" do
@@ -139,6 +143,40 @@ defmodule ReqLLM.BillingTest do
     assert {:ok, cost} = Billing.calculate(usage, model)
     assert cost.tokens == 0.00074
     assert cost.total == 0.00074
+
+    assert %{count: 700, meter: "input", unit: "token"} =
+             Enum.find(cost.line_items, &(&1.id == "token.input"))
+  end
+
+  test "cache write groups retain distinct TTL evidence even with the same tariff id" do
+    model = %LLMDB.Model{
+      provider: :test,
+      id: "same-cache-tariff",
+      pricing: %{
+        components: [
+          %{id: "token.input", kind: "token", rate: 1.0, per: 1_000_000},
+          %{id: "token.cache_write", kind: "token", rate: 2.0, per: 1_000_000}
+        ]
+      }
+    }
+
+    usage = %{
+      input_tokens: 1000,
+      output_tokens: 0,
+      cache_creation_tokens: 10,
+      cache_write_tokens_by_ttl: %{"5m" => 4, "1h" => 6},
+      input_includes_cached: false
+    }
+
+    assert {:ok, charge} = Billing.calculate(usage, model)
+    writes = Enum.filter(charge.line_items, &(&1.id == "token.cache_write"))
+    assert length(writes) == 2
+
+    assert Map.new(writes, &{&1.pricing_context.facts["cache_ttl"], &1.count}) ==
+             %{"5m" => 4, "1h" => 6}
+
+    assert Enum.all?(writes, &(&1.pricing_context.complete and &1.unit == "token"))
+    assert charge.total == 0.00102
   end
 
   test "calculates reasoning_cost separately when token.reasoning component exists" do

@@ -114,7 +114,21 @@ defmodule ReqLLM.ConditionalPricingTest do
     usage = %{cache_storage_token_hours: 1_000_000}
     assert {:ok, charge} = Billing.calculate(usage, model)
     assert charge.total == 2.0
+    assert [storage] = charge.line_items
+    assert storage.pricing_context == %{facts: %{}, complete: true}
     assert {:ok, ^charge} = Billing.calculate(ReqLLM.Usage.normalize(usage), model)
+
+    for context <- [%{input_tokens: nil}, %{"input_tokens" => nil}] do
+      assert ReqLLM.PricingContext.snapshot(context) == %{facts: %{}, complete: true}
+    end
+
+    assert %{complete: false} =
+             ReqLLM.PricingContext.snapshot(%{:input_tokens => nil, "input_tokens" => 1})
+
+    fallback = %{model | pricing: %{currency: "USD", components: [Map.delete(component, :meter)]}}
+    assert {:ok, fallback_charge} = Billing.calculate(%{storage: 1_000_000}, fallback)
+    assert fallback_charge.total == 2.0
+    assert [%{meter: "storage", count: 1_000_000}] = fallback_charge.line_items
 
     conditional = Map.put(component, :applies_when, %{input_tokens: %{lte: 100}})
     model = %{model | pricing: %{currency: "USD", components: [conditional]}}
@@ -200,6 +214,14 @@ defmodule ReqLLM.ConditionalPricingTest do
     assert write.rate == 11.0
     assert write.count == 10_000
     assert write.cost == 0.11
+    assert %{rate: 10.0, per: 1_000_000, multipliers: [2.0, 0.5, 1.1]} = write.rate_inputs
+
+    assert %{
+             complete: true,
+             facts: %{"cache_ttl" => "1h", "api" => "batch", "inference_geo" => "us"}
+           } =
+             write.pricing_context
+
     assert {:ok, nil} = Billing.calculate(usage, model, %{api: "batch", inference_geo: "us"})
   end
 
@@ -231,6 +253,9 @@ defmodule ReqLLM.ConditionalPricingTest do
 
     assert charge.total == 0.0015
     assert Enum.find(charge.line_items, &(&1.id == "token.cache_read")).rate == 0.001
+
+    assert %{rate: 2.0, per: 1_000_000, multipliers: [0.5]} =
+             Enum.find(charge.line_items, &(&1.id == "token.cache_read")).rate_inputs
   end
 
   test "mixed cache write durations are charged through disjoint groups" do
@@ -452,9 +477,18 @@ defmodule ReqLLM.ConditionalPricingTest do
     assert priced.private.req_llm.usage.pricing == %{status: :priced, currency: "USD", total: 1.5}
     assert priced.private.req_llm.usage.total_cost == 1.5
 
+    assert %{version: "req_llm_pricing_inputs_v1", components: components} =
+             priced.private.req_llm.pricing_evidence
+
+    assert Enum.sort(Enum.map(components, & &1.component)) ==
+             ["token.cache_read.peak", "token.input.peak", "token.output.peak"]
+
+    assert Enum.all?(components, &(&1.pricing_context.facts["pricing_period"] == "peak"))
+
     {_request, unknown} = Usage.handle({%{request | private: %{req_llm_model: model}}, response})
     assert unknown.private.req_llm.usage.pricing.status == :unknown
     refute Map.has_key?(unknown.private.req_llm.usage, :total_cost)
+    refute Map.has_key?(unknown.private.req_llm, :pricing_evidence)
   end
 
   test "streaming metadata prices merged usage with the confirmed period", %{deepseek: model} do
@@ -470,7 +504,97 @@ defmodule ReqLLM.ConditionalPricingTest do
     assert {:ok, metadata} = StreamServer.await_metadata(server, 500)
     assert metadata.usage.pricing == %{status: :priced, currency: "USD", total: 1.5}
     assert metadata.usage.total_cost == 1.5
+
+    assert %{version: "req_llm_pricing_inputs_v1", components: components} =
+             metadata.usage.pricing_evidence
+
+    assert Enum.sort(Enum.map(components, & &1.component)) ==
+             ["token.cache_read.peak", "token.input.peak", "token.output.peak"]
+
+    assert Enum.all?(components, &(&1.pricing_context.facts["pricing_period"] == "peak"))
     StreamServer.cancel(server)
+  end
+
+  test "pricing evidence retains unrounded inputs in any currency without inventing USD totals" do
+    model = %LLMDB.Model{
+      provider: :test,
+      id: "small-price",
+      pricing: %{
+        currency: "EUR",
+        components: [%{id: "token.input", kind: "token", rate: 0.1, per: 1_000_000}]
+      }
+    }
+
+    usage = %{input_tokens: 1, output_tokens: 0}
+    priced = Cost.apply(usage, model)
+    assert priced.pricing.total == 0.0
+    refute Map.has_key?(priced, :total_cost)
+    refute Map.has_key?(priced, :cost)
+
+    assert %{currency: "EUR", model: %{provider: :test, id: "small-price"}, components: [input]} =
+             priced.pricing_evidence
+
+    assert input.count == 1
+    assert input.unit == "token"
+    assert input.rate_inputs == %{rate: 0.1, per: 1_000_000, multipliers: []}
+    refute Map.has_key?(input, :cost)
+
+    unpriced = Cost.apply(priced, %{model | pricing: nil})
+    assert unpriced.pricing.status == :unknown
+    refute Map.has_key?(unpriced, :pricing_evidence)
+
+    restored = priced |> Jason.encode!() |> Jason.decode!()
+    unpriced = Cost.apply(restored, %{model | pricing: nil})
+    refute Map.has_key?(unpriced, "pricing_evidence")
+    refute Map.has_key?(unpriced, :pricing_evidence)
+
+    repriced = Cost.apply(restored, model)
+    assert repriced.pricing_evidence == priced.pricing_evidence
+    refute Map.has_key?(repriced, "pricing_evidence")
+
+    missing =
+      priced
+      |> Map.put(:output_tokens, 1)
+      |> Map.put("pricing_evidence", restored["pricing_evidence"])
+      |> Cost.apply(model)
+
+    assert missing.pricing == %{status: :unknown, reason: {:missing_component, :output}}
+    refute Map.has_key?(missing, :pricing_evidence)
+    refute Map.has_key?(missing, "pricing_evidence")
+  end
+
+  test "pricing evidence omits arbitrary context and request content and marks the omission" do
+    model = %LLMDB.Model{
+      provider: :test,
+      id: "context-safe",
+      pricing: %{components: [%{id: "token.input", kind: "token", rate: 1.0, per: 1_000_000}]}
+    }
+
+    context = %{
+      api: "messages",
+      regional_processing: false,
+      input_tokens: 999,
+      request_body: %{speed: "standard", messages: ["private-content"]},
+      prompt: "private-content",
+      base_url: "https://secret.example/path"
+    }
+
+    priced = Cost.apply(%{input_tokens: 10, output_tokens: 0}, model, pricing_context: context)
+    assert [component] = priced.pricing_evidence.components
+
+    assert component.pricing_context == %{
+             complete: false,
+             facts: %{
+               "api" => "messages",
+               "regional_processing" => false,
+               "input_tokens" => 10,
+               "request_body" => %{"speed" => "standard"}
+             }
+           }
+
+    encoded = Jason.encode!(priced.pricing_evidence)
+    refute encoded =~ "private-content"
+    refute encoded =~ "secret.example"
   end
 
   test "a later stream usage update cannot erase an earlier invalid cache count" do

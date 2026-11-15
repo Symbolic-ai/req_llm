@@ -41,7 +41,8 @@ defmodule ReqLLM.Billing do
            tool_coverage?(rates, usage) and image_coverage?(rates, main_meters, usage, model),
          main_rates <-
            if(write_groups, do: Enum.reject(rates, &(meter_key(&1) == :cache_write)), else: rates),
-         {:ok, items} <- price_components(main_rates, modifiers, main_meters, usage, rates),
+         {:ok, items} <-
+           price_components(main_rates, modifiers, main_meters, usage, rates, context),
          {:ok, write_items} <-
            price_cache_write_groups(model, context, meters, usage, write_groups) do
       {:ok, cost_summary(items ++ write_items, model)}
@@ -224,13 +225,14 @@ defmodule ReqLLM.Billing do
           cache_write: count
       }
 
-      selection = LLMDB.Pricing.components_for(model, Map.put(context, :cache_ttl, ttl))
+      group_context = Map.put(context, :cache_ttl, ttl)
+      selection = LLMDB.Pricing.components_for(model, group_context)
 
       with {:ok, rates, modifiers} <- selected_components(selection, group_meters, usage),
            :ok <- validate_coverage(rates, selection, group_meters, usage),
            write_rates <- Enum.filter(rates, &(meter_key(&1) == :cache_write)),
            {:ok, write_items} <-
-             price_components(write_rates, modifiers, group_meters, usage, rates) do
+             price_components(write_rates, modifiers, group_meters, usage, rates, group_context) do
         {:cont, {:ok, items ++ write_items}}
       else
         _ -> {:halt, :error}
@@ -391,8 +393,9 @@ defmodule ReqLLM.Billing do
     end
   end
 
-  defp price_components(rates, modifiers, meters, usage, resolution_rates) do
+  defp price_components(rates, modifiers, meters, usage, resolution_rates, context) do
     by_id = Map.new(resolution_rates, &{Component.id_string(&1), &1})
+    context_snapshot = ReqLLM.PricingContext.snapshot(context)
 
     meters = %{
       meters
@@ -403,14 +406,18 @@ defmodule ReqLLM.Billing do
     rates
     |> Enum.reduce_while({:ok, []}, fn component, {:ok, items} ->
       with {:ok, count} <- component_count(component, meters, usage),
-           {:ok, rate, per} <- resolve_rate(component, by_id),
-           {:ok, adjusted_rate} <- apply_modifiers(component, rate, modifiers) do
+           {:ok, rate, per, inputs} <- resolve_rate(component, by_id),
+           {:ok, adjusted_rate, applied} <- apply_modifiers(component, rate, modifiers) do
         item = %{
           id: component.id,
           component: Component.id_string(component) || component.id,
           count: count,
           quantity: count,
           kind: component.kind,
+          meter: component_meter(component),
+          unit: component_unit(component, usage),
+          pricing_context: context_snapshot,
+          rate_inputs: %{inputs | multipliers: inputs.multipliers ++ applied},
           rate: adjusted_rate,
           per: per,
           cost: Float.round(count / per * adjusted_rate, 6)
@@ -429,7 +436,7 @@ defmodule ReqLLM.Billing do
 
   defp resolve_rate(%Component{derives_from: nil, rate: rate, per: per}, _by_id)
        when is_number(rate) and rate >= 0 and is_number(per) and per > 0,
-       do: {:ok, rate, per}
+       do: {:ok, rate, per, %{rate: rate, per: per, multipliers: []}}
 
   defp resolve_rate(%Component{derives_from: base_id, multiplier: multiplier} = component, by_id)
        when is_binary(base_id) and is_number(multiplier) and multiplier >= 0 do
@@ -439,7 +446,9 @@ defmodule ReqLLM.Billing do
         per = component.per || base_per
 
         if is_number(per) and per > 0,
-          do: {:ok, base_rate * multiplier * per / base_per, per},
+          do:
+            {:ok, base_rate * multiplier * per / base_per, per,
+             %{rate: base_rate, per: base_per, multipliers: [multiplier]}},
           else: :error
 
       _ ->
@@ -453,14 +462,15 @@ defmodule ReqLLM.Billing do
     id = Component.id_string(component)
 
     if is_binary(id) do
-      multiplier =
-        Enum.reduce(modifiers, 1.0, fn modifier, acc ->
-          if Enum.any?(modifier.applies_to, &target_matches?(&1, id)),
-            do: acc * modifier.multiplier,
-            else: acc
+      applied =
+        modifiers
+        |> Enum.filter(fn modifier ->
+          Enum.any?(modifier.applies_to, &target_matches?(&1, id))
         end)
+        |> Enum.map(& &1.multiplier)
 
-      {:ok, rate * multiplier}
+      multiplier = Enum.reduce(applied, 1.0, &(&2 * &1))
+      {:ok, rate * multiplier, applied}
     else
       :error
     end
@@ -542,6 +552,30 @@ defmodule ReqLLM.Billing do
   defp meter_key(%Component{kind: :storage, meter: meter}), do: {:storage, meter}
   defp meter_key(component), do: component.id
 
+  defp component_meter(%Component{} = component) do
+    case meter_key(component) do
+      nil -> nil
+      value when is_atom(value) -> Atom.to_string(value)
+      value when is_binary(value) -> value
+      {:tool, tool, _unit} -> Tool.normalize_unit(tool)
+      {:image, _size} -> "generated"
+      {:storage, meter} -> Tool.normalize_unit(meter) || "storage"
+      _ -> nil
+    end
+  end
+
+  defp component_unit(%Component{kind: :tokens}, _usage), do: "token"
+  defp component_unit(%Component{kind: :images}, _usage), do: "image"
+
+  defp component_unit(%Component{kind: :tools, tool: tool, unit: unit}, usage) do
+    reported =
+      usage |> MapAccess.get(:tool_usage, %{}) |> Tool.entry(tool) |> MapAccess.get(:unit)
+
+    unit || Tool.normalize_unit(reported)
+  end
+
+  defp component_unit(%Component{unit: unit}, _usage), do: unit
+
   defp cost_summary(items, model) do
     totals =
       Enum.reduce(items, %{tokens: 0.0, tools: 0.0, images: 0.0, storage: 0.0}, fn item, acc ->
@@ -579,6 +613,7 @@ defmodule ReqLLM.Billing do
 
     Map.merge(totals, %{
       currency: currency,
+      model: %{provider: model.provider, id: model.id},
       total: Float.round(totals.tokens + totals.tools + totals.images + totals.storage, 6),
       line_items: items
     })

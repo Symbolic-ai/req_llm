@@ -3,6 +3,10 @@ defmodule ReqLLM.Usage.Cost do
 
   alias ReqLLM.MapAccess
 
+  @evidence_fields [:pricing_evidence, "pricing_evidence"]
+  @usd_cost_fields [:cost, :input_cost, :output_cost, :reasoning_cost, :total_cost]
+  @stale_cost_fields @usd_cost_fields ++ @evidence_fields
+
   @spec apply(map(), LLMDB.Model.t() | nil, keyword()) :: map()
   def apply(usage, model, opts \\ [])
 
@@ -41,12 +45,17 @@ defmodule ReqLLM.Usage.Cost do
              output_cost: cost.output_cost,
              reasoning_cost: cost.reasoning_cost,
              total_cost: cost.total,
+             pricing_evidence: evidence(cost),
              cost: cost
            }}
 
         {:ok, cost} ->
           {:ok,
-           %{pricing: %{status: :priced, currency: cost.currency, total: cost.total}, cost: cost}}
+           %{
+             pricing: %{status: :priced, currency: cost.currency, total: cost.total},
+             pricing_evidence: evidence(cost),
+             cost: cost
+           }}
       end
     else
       {:ok, nil}
@@ -60,17 +69,25 @@ defmodule ReqLLM.Usage.Cost do
 
   def merge(usage, nil, _opts) do
     usage
-    |> Map.drop([:cost, :input_cost, :output_cost, :reasoning_cost, :total_cost])
+    |> Map.drop(@stale_cost_fields)
     |> Map.put(:pricing, %{status: :unknown})
   end
 
   def merge(usage, %{pricing: %{status: :unknown} = pricing}, _opts) do
     usage
-    |> Map.drop([:cost, :input_cost, :output_cost, :reasoning_cost, :total_cost])
+    |> Map.drop(@stale_cost_fields)
     |> Map.put(:pricing, pricing)
   end
 
   def merge(usage, cost_breakdown, _opts) do
+    usage = Map.drop(usage, @evidence_fields)
+
+    usage =
+      case Map.get(cost_breakdown, :pricing_evidence) do
+        evidence when is_map(evidence) -> Map.put(usage, :pricing_evidence, evidence)
+        _ -> usage
+      end
+
     if cost_breakdown.pricing.currency == "USD" do
       usage
       |> Map.put(:pricing, cost_breakdown.pricing)
@@ -81,9 +98,29 @@ defmodule ReqLLM.Usage.Cost do
       |> Map.put(:total_cost, cost_breakdown.total_cost)
     else
       usage
-      |> Map.drop([:cost, :input_cost, :output_cost, :reasoning_cost, :total_cost])
+      |> Map.drop(@usd_cost_fields)
       |> Map.put(:pricing, cost_breakdown.pricing)
     end
+  end
+
+  defp evidence(cost) do
+    %{
+      version: "req_llm_pricing_inputs_v1",
+      currency: cost.currency,
+      model: cost.model,
+      components:
+        Enum.map(cost.line_items, fn item ->
+          Map.take(item, [
+            :component,
+            :kind,
+            :count,
+            :meter,
+            :unit,
+            :rate_inputs,
+            :pricing_context
+          ])
+        end)
+    }
   end
 
   defp tokens_numeric?(usage) do
