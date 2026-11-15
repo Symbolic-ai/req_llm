@@ -62,7 +62,9 @@ Only known scalar classifications and `request_body.speed` are retained; raw
 URLs, arbitrary context and request content are omitted. `complete: false` marks
 an omission, conflicting aliases or an unsupported value. This flag describes
 **retention of supplied context**, not usage/tariff completeness or invoice
-accuracy. The selector's calculated prompt size is used rather than a caller's
+accuracy. An unreported input size is not a supplied fact: its injected nil is
+omitted without marking the snapshot incomplete. The selector's calculated prompt
+size is used rather than a caller's
 input-size preference. Disjoint cache-write groups retain their own TTL context,
 including when they select the same component ID. Component IDs alone therefore
 do not identify a unique group. Tool units remain their actual reported/tariff

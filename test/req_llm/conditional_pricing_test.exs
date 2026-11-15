@@ -114,7 +114,16 @@ defmodule ReqLLM.ConditionalPricingTest do
     usage = %{cache_storage_token_hours: 1_000_000}
     assert {:ok, charge} = Billing.calculate(usage, model)
     assert charge.total == 2.0
+    assert [storage] = charge.line_items
+    assert storage.pricing_context == %{facts: %{}, complete: true}
     assert {:ok, ^charge} = Billing.calculate(ReqLLM.Usage.normalize(usage), model)
+
+    for context <- [%{input_tokens: nil}, %{"input_tokens" => nil}] do
+      assert ReqLLM.PricingContext.snapshot(context) == %{facts: %{}, complete: true}
+    end
+
+    assert %{complete: false} =
+             ReqLLM.PricingContext.snapshot(%{:input_tokens => nil, "input_tokens" => 1})
 
     conditional = Map.put(component, :applies_when, %{input_tokens: %{lte: 100}})
     model = %{model | pricing: %{currency: "USD", components: [conditional]}}

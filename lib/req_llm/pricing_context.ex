@@ -29,6 +29,13 @@ defmodule ReqLLM.PricingContext do
   end
 
   def snapshot(context) when is_map(context) do
+    context =
+      case {Map.fetch(context, :input_tokens), Map.fetch(context, "input_tokens")} do
+        {{:ok, nil}, :error} -> Map.delete(context, :input_tokens)
+        {:error, {:ok, nil}} -> Map.delete(context, "input_tokens")
+        _ -> context
+      end
+
     {facts, complete} =
       Enum.reduce(@snapshot_keys, {%{}, true}, fn key, {facts, complete} ->
         if has_fact?(context, key) do
