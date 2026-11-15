@@ -542,6 +542,16 @@ defmodule ReqLLM.ConditionalPricingTest do
     repriced = Cost.apply(restored, model)
     assert repriced.pricing_evidence == priced.pricing_evidence
     refute Map.has_key?(repriced, "pricing_evidence")
+
+    missing =
+      priced
+      |> Map.put(:output_tokens, 1)
+      |> Map.put("pricing_evidence", restored["pricing_evidence"])
+      |> Cost.apply(model)
+
+    assert missing.pricing == %{status: :unknown, reason: {:missing_component, :output}}
+    refute Map.has_key?(missing, :pricing_evidence)
+    refute Map.has_key?(missing, "pricing_evidence")
   end
 
   test "pricing evidence omits arbitrary context and request content and marks the omission" do
