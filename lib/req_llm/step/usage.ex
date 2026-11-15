@@ -106,6 +106,15 @@ defmodule ReqLLM.Step.Usage do
       req_llm_data = Map.get(resp.private, :req_llm, %{})
       updated_req_llm_data = Map.put(req_llm_data, :usage, meta)
 
+      updated_req_llm_data =
+        case cost_breakdown do
+          %{pricing_evidence: evidence} ->
+            Map.put(updated_req_llm_data, :pricing_evidence, evidence)
+
+          _ ->
+            Map.delete(updated_req_llm_data, :pricing_evidence)
+        end
+
       updated_resp =
         case resp.body do
           %ReqLLM.Response{usage: response_usage} when is_map(response_usage) ->

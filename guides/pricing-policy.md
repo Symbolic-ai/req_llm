@@ -45,6 +45,42 @@ Those tests are important, but they are not a guarantee of invoice-exact billing
 
 ## Known Gaps
 
+### Retained pricing inputs
+
+Successful local pricing also exposes `usage.pricing_evidence`, independently of
+the legacy rounded totals. Raw-response consumers can read the same evidence at
+`response.private[:req_llm][:pricing_evidence]` after the usage step. The versioned
+`req_llm_pricing_inputs_v1` snapshot contains the resolved **pricing** model,
+currency and selected component IDs, counts, meters, units, original base rate
+and denominator, and ordered derived/modifier multipliers. It excludes the
+six-decimal `cost` and `total` fields. Consumers can calculate from those inputs
+using their own decimal precision without copying rounded telemetry amounts.
+The base denominator is retained even when a derived component uses another
+denominator: its change cancels in the per-unit charge. The existing numeric
+telemetry calculations remain unchanged.
+
+Each component retains bounded selector facts under `pricing_context.facts`.
+Only known scalar classifications and `request_body.speed` are retained; raw
+URLs, arbitrary context and request content are omitted. `complete: false` marks
+an omission, conflicting aliases or an unsupported value. This flag describes
+**retention of supplied context**, not usage/tariff completeness or invoice
+accuracy. The selector's calculated prompt size is used rather than a caller's
+input-size preference. Disjoint cache-write groups retain their own TTL context,
+including when they select the same component ID. Component IDs alone therefore
+do not identify a unique group. Tool units remain their actual reported/tariff
+units; a missing unit stays `nil` and must not be guessed.
+
+Evidence is retained for non-USD currencies without inventing USD scalar costs.
+Unknown pricing clears prior evidence. A missing evidence object does not mean
+free usage. The pricing model is not proof of a provider-reported physical model,
+and normalized charge counts are not a replacement for retaining raw measured
+usage and its inclusion flags. Host applications still own durable observation
+identity, original attribution, rate-authority conflicts, native measurements,
+coverage gaps and storage/recovery. This snapshot is an estimate input, not an
+invoice or customer-billing authority.
+
+### Unsupported billing surfaces
+
 These limitations are known and should not be treated as supported billing guarantees:
 
 - video generation pricing, such as OpenAI Sora-style billing

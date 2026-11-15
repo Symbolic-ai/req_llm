@@ -107,6 +107,15 @@ defmodule ReqLLM.OpenAIPricingContextTest do
     assert response.body.usage.tool_usage == %{}
     assert response.body.usage.total_cost > 0
     assert response.body.usage.pricing.status == :priced
+    assert [_ | _] = components = response.body.usage.pricing_evidence.components
+
+    assert Enum.all?(components, fn component ->
+             component.pricing_context.complete and
+               component.pricing_context.facts["api"] == "responses" and
+               component.pricing_context.facts["service_tier"] == "default" and
+               component.pricing_context.facts["regional_processing"] == false
+           end)
+
     assert_client_execution(response.body.message.tool_calls)
   end
 
@@ -116,6 +125,14 @@ defmodule ReqLLM.OpenAIPricingContextTest do
 
     assert metadata.usage.tool_usage == %{}
     assert metadata.usage.total_cost > 0
+    assert [_ | _] = components = metadata.usage.pricing_evidence.components
+
+    assert Enum.all?(components, fn component ->
+             component.pricing_context.complete and
+               component.pricing_context.facts["api"] == "responses" and
+               component.pricing_context.facts["service_tier"] == "default" and
+               component.pricing_context.facts["regional_processing"] == false
+           end)
 
     assert {:ok, response} =
              ResponsesAPI.ResponseBuilder.build_response(chunks, metadata,

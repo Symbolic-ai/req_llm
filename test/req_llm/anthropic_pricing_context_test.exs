@@ -172,6 +172,15 @@ defmodule ReqLLM.AnthropicPricingContextTest do
 
       assert usage.pricing.status == :priced
       assert_in_delta usage.total_cost, 0.0006, 1.0e-12
+      assert [_ | _] = components = usage.pricing_evidence.components
+
+      assert Enum.all?(components, fn component ->
+               component.pricing_context.complete and
+                 component.pricing_context.facts["api"] == "messages" and
+                 component.pricing_context.facts["service_tier"] == "standard" and
+                 component.pricing_context.facts["inference_geo"] == "global" and
+                 component.pricing_context.facts["request_body"] == %{"speed" => "standard"}
+             end)
     end
 
     test "#{path} pricing remains unknown when required returned facts are invalid or absent" do

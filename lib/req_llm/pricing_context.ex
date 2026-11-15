@@ -12,6 +12,80 @@ defmodule ReqLLM.PricingContext do
   to Anthropic. Missing region and gateway speed facts require explicit context.
   """
 
+  @snapshot_keys ~w(api service_tier regional_processing inference_geo cache_ttl input_tokens region pricing_period context_band size_class quality image_size request_body)a
+
+  @doc """
+  Retains bounded pricing-selector facts without request bodies or arbitrary context.
+
+  The snapshot is evidence of the context supplied to local pricing, not proof of
+  a provider invoice. `complete` means every supplied context fact was retained;
+  it does not imply that usage, tariff coverage or provider facts were complete.
+  Unsupported facts are omitted and make the snapshot incomplete. No defaults
+  are invented. Only `speed` is retained from nested `request_body` context.
+  """
+  @spec snapshot(map() | keyword() | nil) :: %{facts: map(), complete: boolean()}
+  def snapshot(context) when is_list(context) do
+    if Keyword.keyword?(context), do: snapshot(Map.new(context)), else: incomplete_snapshot()
+  end
+
+  def snapshot(context) when is_map(context) do
+    {facts, complete} =
+      Enum.reduce(@snapshot_keys, {%{}, true}, fn key, {facts, complete} ->
+        if has_fact?(context, key) do
+          case snapshot_fact(key, get_fact(context, key)) do
+            {:ok, value, retained} ->
+              {Map.put(facts, Atom.to_string(key), value), complete and retained}
+
+            :error ->
+              {facts, false}
+          end
+        else
+          {facts, complete}
+        end
+      end)
+
+    %{facts: facts, complete: complete and map_size(facts) == map_size(context)}
+  end
+
+  def snapshot(nil), do: %{facts: %{}, complete: true}
+  def snapshot(_context), do: incomplete_snapshot()
+
+  defp incomplete_snapshot, do: %{facts: %{}, complete: false}
+
+  defp snapshot_fact(:input_tokens, value) when is_integer(value) and value >= 0,
+    do: {:ok, value, true}
+
+  defp snapshot_fact(:regional_processing, value) when is_boolean(value),
+    do: {:ok, value, true}
+
+  defp snapshot_fact(:request_body, body) when is_map(body) do
+    case snapshot_label(get_fact(body, :speed)) do
+      {:ok, value} -> {:ok, %{"speed" => value}, map_size(body) == 1}
+      :error -> :error
+    end
+  end
+
+  defp snapshot_fact(key, value)
+       when key not in [:input_tokens, :regional_processing, :request_body] do
+    case snapshot_label(value) do
+      {:ok, value} -> {:ok, value, true}
+      :error -> :error
+    end
+  end
+
+  defp snapshot_fact(_key, _value), do: :error
+
+  defp snapshot_label(value) when is_atom(value) and value not in [nil, true, false],
+    do: snapshot_label(Atom.to_string(value))
+
+  defp snapshot_label(value) when is_binary(value) and byte_size(value) in 1..64 do
+    if Regex.match?(~r/\A[a-zA-Z0-9][a-zA-Z0-9_.:-]*\z/, value),
+      do: {:ok, value},
+      else: :error
+  end
+
+  defp snapshot_label(_value), do: :error
+
   @doc """
   Merges confirmed OpenAI endpoint and returned metadata into explicit context.
 
