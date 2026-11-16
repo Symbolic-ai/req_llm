@@ -1720,7 +1720,9 @@ defmodule ReqLLM.Providers.Google do
               end
 
             response_with_raw_finish =
-              put_raw_finish_provider_meta(response_with_grounding, body)
+              response_with_grounding
+              |> put_raw_finish_provider_meta(body)
+              |> attach_function_call_thought_signatures(body)
 
             merged_response =
               ReqLLM.Context.merge_response(

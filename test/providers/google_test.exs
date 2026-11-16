@@ -2751,6 +2751,45 @@ defmodule ReqLLM.Providers.GoogleTest do
       assert ReqLLM.ToolCall.metadata(tool_call)[:thought_signature] == "sig_abc"
     end
 
+    test "decode_response for :chat without streaming preserves function call thought signatures" do
+      google_response = %{
+        "candidates" => [
+          %{
+            "content" => %{
+              "parts" => [
+                %{
+                  "functionCall" => %{"name" => "get_weather", "args" => %{"city" => "Madrid"}},
+                  "thoughtSignature" => "weather_sig"
+                },
+                %{
+                  "functionCall" => %{"name" => "get_time", "args" => %{"city" => "Madrid"}},
+                  "thoughtSignature" => "time_sig"
+                }
+              ],
+              "role" => "model"
+            },
+            "finishReason" => "STOP"
+          }
+        ]
+      }
+
+      mock_req = %Req.Request{
+        options: [
+          context: context_fixture(),
+          stream: false,
+          operation: :chat,
+          model: "gemini-3-flash"
+        ]
+      }
+
+      {_req, resp} =
+        Google.decode_response({mock_req, %Req.Response{status: 200, body: google_response}})
+
+      assert [weather, time] = ReqLLM.Response.tool_calls(resp.body)
+      assert ReqLLM.ToolCall.metadata(weather)[:thought_signature] == "weather_sig"
+      assert ReqLLM.ToolCall.metadata(time)[:thought_signature] == "time_sig"
+    end
+
     test "prepare_request creates configured embedding request" do
       {:ok, model} = ReqLLM.model("google:gemini-embedding-001")
       text = "Hello, world!"
